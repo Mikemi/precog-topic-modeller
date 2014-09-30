@@ -1,6 +1,7 @@
 package precogtopic;
 
 import static precogtopic.Utils.*;
+import static precogtopic.PrecogTopicResult.*;
 
 import java.io.*;
 import java.util.*;
@@ -13,54 +14,77 @@ import cc.mallet.pipe.iterator.*;
 import cc.mallet.topics.*;
 
 public class TopicModeller {
+
+	private Boolean TOFILE = true;
+	private Boolean VERBOSE = true;
+	private Boolean TRACE = false;
+	
+	private int PRINT_LIST_LIMIT = 5;
+
+	static String STOPLISTFILE = "stoplists/en.txt";
+	
 //	static String TESTFILE = "../tests/stest-result-mallet";
-	static String TESTDIR =  "../tests/topic-test-200";
+//	static String TESTDIR =  "../tests/topic-test-200";
+//	static String TESTDIR =  "../tests/topic-test-1";
+//	static String TESTDIR =  "../tests/topic-test-10";
+//	static String TESTDIR =  "../tests/topic-test-20";
+	static String TESTDIR =  "../tests/topic-test-100";
 	private String OUTFILE = "../tests/out-TopicModeller-$.txt";
-	private Boolean TOFILE = false;
-	private Boolean VERBOSE = false;
 	private String FILE_NAME_END = "-text.txt";
 	
-	TopicResult result = new TopicResult();
+	private String stopListFilePath = null;
 	
-	private int DEFAULT_NTOPICS = 10;
-	private int DEFAULT_NITERATIONS = 50;
+	private Integer nTops = 0;
+	private Integer nIters = 0; 
+	private List<String> tDocIds = null;
+	private Map<String,String> tDocIdDocTextMap = null;
+	
 	private String timeStamp = null;
-	
-	private Alphabet dataAlphabet;
 	
 	long startTime = System.currentTimeMillis();
 
 	// ------------------------------------	
 	static public void main(String[] args){
 
-		TopicModeller topicModeller = new TopicModeller();
-		topicModeller.getTopics(TESTDIR);
+		TopicModeller topicModeller = new TopicModeller(50,100);
+//		topicModeller.getTopics(STOPLISTFILE, TESTDIR);
+		topicModeller.getTopics1(STOPLISTFILE, TESTDIR);
 	}	
 	// ------------------------------------
 	
 	public TopicModeller(){
 		createOutFile();
-		result.nIterations = DEFAULT_NITERATIONS;
-		result.nTopics = DEFAULT_NTOPICS;
+		nTops = PrecogTopicResult.DEFAULT_NTOPICS;
+		nIters = PrecogTopicResult.DEFAULT_NITERATIONS;
 	}
 
 	public TopicModeller(int nTopics, int nIterations){
 		createOutFile();
-		if(nTopics < 1)
-			result.nTopics = DEFAULT_NTOPICS;
+		
+		if(nTopics > 0)
+			nTops = nTopics;
 		else 
-			result.nTopics = nTopics;
-		if(nIterations < 1)
-			result.nIterations = DEFAULT_NITERATIONS;
-		else 
-			result.nIterations = nIterations;
-	}
+			nTops = PrecogTopicResult.DEFAULT_NTOPICS;
+		
+		if(nIterations > 0)
+			nIters = nIterations;
+		else
+			nIters = PrecogTopicResult.DEFAULT_NITERATIONS;
 
-	public TopicResult getTopics(String path){
+	}
+	
+	// ------------------------------------
+
+	// call for a test dir
+	public PrecogTopicResult getTopics(String stopListFilePath, String path){
+		this.stopListFilePath = stopListFilePath;
+		tDocIds = new ArrayList<>();
+		tDocIdDocTextMap = new HashMap<>();
 		
 		String malletFormatString = null;
 		try {
-			malletFormatString = createMalletFormatString(path);
+			Boolean fillresult = true;
+			malletFormatString = createMalletFormatString(path,fillresult);
 		} catch (IOException e) {
 			System.out.println("*** Something wrong with the input dir!");
 			e.printStackTrace();
@@ -68,40 +92,67 @@ public class TopicModeller {
 		}
 		if(malletFormatString == null) return null;
 		Reader stringReader = new StringReader(malletFormatString);
-		TopicResult ret = getTopics(stringReader);
+		PrecogTopicResult ret = getTopics(stringReader);
 		return ret;
 	}
 	
-	public TopicResult getTopics(TopicResult input){
+	// to test the call with lists
+	public PrecogTopicResult getTopics1(String stopListFilePath, String path){
 		
-		StringBuilder sb = new StringBuilder();
-		for(String docId:input.docIdDocTextMap.keySet()){
-			String text = input.docIdDocTextMap.get(docId).replaceAll("\n", " ").replaceAll(" +"," ");
-			sb.append(docId).append("\tTopics\t").append(text).append("\n");
+		String malletFormatString = null;
+		try {
+			Boolean fillresult = false;
+			malletFormatString = createMalletFormatString(path,fillresult);
+		} catch (IOException e) {
+			System.out.println("*** Something wrong with the input dir!");
+			e.printStackTrace();
+			return null;
 		}
-		Reader stringReader = new StringReader(sb.toString());
-		return getTopics(stringReader);
+		if(malletFormatString == null) return null;
+		String[] ss = malletFormatString.split("\n");
+		List<String> docIds = new ArrayList<>(); 
+		List<String> docTexts = new ArrayList<>();
+		for(String line:ss){
+			String[] parts = line.split("\t");
+			String docId = parts[0];
+			String docText = parts[2];
+			docIds.add(docId);
+			docTexts.add(docText);
+		}
+		
+		PrecogTopicResult ret = getTopics(docIds,docTexts,stopListFilePath);
+		return ret;
 	}
 	
-	public TopicResult getTopics(List<String> docIds, List<String> docTexts){
+	// Recommended for the topicservice
+	public PrecogTopicResult getTopics(List<String> docIds, List<String> docTexts, String stopListFilePath){
+		this.stopListFilePath = stopListFilePath;
+		tDocIds = new ArrayList<>();
+		tDocIdDocTextMap = new HashMap<>();		
+
 		if(docIds == null || docTexts == null || docIds.size() == 0 || docIds.size() != docTexts.size()){
-			System.out.println("*** Topic modeler: invalid input args");
+			System.out.println("*** Topic modeller: invalid input args");
 			return null;
 		}
 		StringBuilder sb = new StringBuilder();
-		for(int i=0;i>docIds.size();i++){
-			result.docIds.add(docIds.get(i));
-			result.docIdDocTextMap.put(docIds.get(i), docTexts.get(i));
-			sb.append(docIds.get(i)).append("\tTopics\t").append(docTexts.get(i).replace("\n"," ")).append("\n");
+		for(int i = 0; i < docIds.size(); i++){
+			tDocIds.add(docIds.get(i));
+			tDocIdDocTextMap.put(docIds.get(i), docTexts.get(i));
+			sb.append(docIds.get(i)).append("\tTopics\t").append(docTexts.get(i).replaceAll("\n"," ").replaceAll("\t"," ").replaceAll(" +"," ")).append("\n");
 		}
 		Reader stringReader = new StringReader(sb.toString());
-		return getTopics(stringReader);
+		PrecogTopicResult result = getTopics(stringReader);
+		return result;
 	}
 	
-	// ----------
+	// ------------------------------------
 	// THE ACTION
-	public TopicResult getTopics(Reader reader){
+	public PrecogTopicResult getTopics(Reader reader){
         
+		startTime = System.currentTimeMillis();
+
+		// This will be the return value
+		PrecogTopicResult result = new PrecogTopicResult(nTops, nIters, tDocIds, tDocIdDocTextMap);
 		
 		// Begin by importing documents from text to feature sequences
         ArrayList<Pipe> pipeList = new ArrayList<Pipe>();
@@ -109,39 +160,15 @@ public class TopicModeller {
         // Pipes: lowercase, tokenize, remove stopwords, map to features
         pipeList.add( new CharSequenceLowercase() );
         pipeList.add( new CharSequence2TokenSequence(Pattern.compile("\\p{L}[\\p{L}\\p{P}]+\\p{L}")) );
-        pipeList.add( new TokenSequenceRemoveStopwords(new File("stoplists/en.txt"), "UTF-8", false, false, false) );
+        pipeList.add( new TokenSequenceRemoveStopwords(new File(stopListFilePath), 
+        		"UTF-8", false, false, false) );
         pipeList.add( new TokenSequence2FeatureSequence() );
 
         InstanceList instances = new InstanceList (new SerialPipes(pipeList));
 
-        // Add the docs one by one
-        
-        CsvIterator csvIterator = new CsvIterator (reader, Pattern.compile("^(\\S*)[\\s,]*(\\S*)[\\s,]*(.*)$"),3, 2, 1);	// data, label, name fields
-        
-//        try {
-//			reader.reset();
-//		} catch (IOException e1) {
-//			// TODO Auto-generated catch block
-//			e1.printStackTrace();
-//		}
-//        Integer i = 0;
-//        while(csvIterator.hasNext()){
-//        	i = i+1;
-//        	Instance instance = csvIterator.next();
-//        	String docId = instance.getName().toString();
-//        	result.docIds.add(docId);
-//        	String docText = instance.getData().toString();
-//        	result.docIdDocTextMap.put(docId, docText);
-//        	syso(i.toString() + ": " + docId + "\t" + docText.substring(0, (docText.length() > 120 ? 120 : docText.length())));
-//        }
-//        
-//        try {
-//			reader.reset();
-//		} catch (IOException e1) {
-//			// TODO Auto-generated catch block
-//			e1.printStackTrace();
-//		}
-//        csvIterator = new CsvIterator (reader, Pattern.compile("^(\\S*)[\\s,]*(\\S*)[\\s,]*(.*)$"),3, 2, 1);	// data, label, name fields
+        // Add the docs one by one        
+        CsvIterator csvIterator = new CsvIterator (reader, 
+        		Pattern.compile("^(\\S*)[\\s,]*(\\S*)[\\s,]*(.*)$"),3, 2, 1);	// data, label, name fields
         
         instances.addThruPipe(csvIterator); 
 
@@ -169,126 +196,109 @@ public class TopicModeller {
 		}
         
         // ------ Model done 
-        
-        // Show the words and topics in the first instance
 
         // The data alphabet maps word IDs to strings
         Alphabet dataAlphabet = instances.getDataAlphabet();
 
-        // Get an array of sorted sets of word ID/count pairs
+        // ----------
+        // Get an array of topics - with the sorted sets of word-count pairs
+        
+        // This is the Mallet version:
         ArrayList<TreeSet<IDSorter>> topicSortedWords = model.getSortedWords();
+        
+        // convert it to PrecogTopicResult version
+        for(int i=0; i<topicSortedWords.size(); i++){
+        	List<StringIntegerPair> sortedWordList = new ArrayList<>();
+        	for(IDSorter ids:topicSortedWords.get(i)){
+        		String word = (String) dataAlphabet.lookupObject(ids.getID());
+        		Integer count = new Integer((int)ids.getWeight());
+        		sortedWordList.add(new StringIntegerPair(word,count));
+        	}
+        	result.topicsToSortedWordsAndCountsMap.put(new Integer(i).toString(), sortedWordList);
+        }
+        
+        // Get the sorted topic list
+        
+        for(int i=0; i<nTops; i++){
+        	String topicId = new Integer(i).toString();
+        	List<StringIntegerPair> sortedWordList = result.topicsToSortedWordsAndCountsMap.get(topicId);
+        	Integer cumulativeCount = 0;
+        	for(StringIntegerPair sip : sortedWordList){
+        		cumulativeCount = cumulativeCount + sip.i;
+        	}
+        	result.sortedTopicList.add(new StringIntegerPair(new Integer(i).toString(),cumulativeCount));
+        }
+        Collections.sort(result.sortedTopicList);
     
+        // For each document
         for(int d = 0; d < model.getData().size(); d++){
         	String docId = result.docIds.get(d);
         	
-	        FeatureSequence docTokens = (FeatureSequence) model.getData().get(d).instance.getData();
-	        LabelSequence docTopics = model.getData().get(d).topicSequence;
+        	// The mallet version ???
+//	        FeatureSequence docTokens = (FeatureSequence) model.getData().get(d).instance.getData();
+//	        LabelSequence docTopics = model.getData().get(d).topicSequence;
 
-	        // Here the word -> topic assignment is given for each doc
-	        Formatter formatter = null;
-	        /**	        
-	        {
-	        	if(VERBOSE) 
-	        		syso("\n\t* Doc-" + new Integer(d).toString() + ": " + result.docIds.get(d) + ":");
-		        out = new Formatter(new StringBuilder(), Locale.US);
-		        StringBuilder sba = new StringBuilder("\n\t\t+Doc-a-");
-		        StringBuilder sbb = new StringBuilder("\n\t\t+TopicIx-b-");
-		        for (int position = 0; position < docTokens.getLength(); position++) {
-		        	Object wordAtPosition = dataAlphabet.lookupObject(docTokens.getIndexAtPosition(position));
-		        	Object topicIndexAtPosition = docTopics.getIndexAtPosition(position);
-		        	out.format("%s-%d ", wordAtPosition, topicIndexAtPosition);        
-		        }
-		        if(VERBOSE)
-		        	syso("\n* From Mallet formatter: " + result.docIds.get(d) + ":\n" + out.toString());
-	        }
+	        // -------------
+        	// topic distribution
+	        List<StringDoublePair> topicListWithProb = new ArrayList<>();
 	        
-	        if(VERBOSE)
-	        	syso("----------------");
-	        **/
-	        
-	        // Estimate the topic distribution of the first instance, 
+	        // Estimate the topic distribution of the doc d, 
 	        //  given the current Gibbs state.
 	        double[] docTopicDistribution = model.getTopicProbabilities(d);
-		    
-	        Boolean topicWordsFilled = false;
-	        // Show the words in topics in order by the proportions for the document
-	        for (int topic = 0; topic < numTopics; topic++) {
-	            Iterator<IDSorter> iterator = topicSortedWords.get(topic).iterator();
-	            Map<String,List<String>> topicSortedWordList = new HashMap<>();
-	            Map<String,List<Double>> topicSortedWeightList = new HashMap<>();
-            	String topicNumAsString = new Integer(topic).toString();
-                List<String> wordList = new ArrayList<>();
-                List<Double> weightList = new ArrayList<>();
-                Map<String,Double> topicToDistributionMap = new HashMap<>();
-	            {
-	            	if(VERBOSE) syso("\t* topic-" + topicNumAsString);
-		            formatter = new Formatter(new StringBuilder(), Locale.US);
-		            formatter.format("%d\t%.3f\t", topic, docTopicDistribution[topic]);
-		            
-		            topicToDistributionMap.put(topicNumAsString, docTopicDistribution[topic]);
-		            
-		            int rank = 0;
-			        StringBuilder sba = new StringBuilder("\n\t\t+Topic-a-");
-			        StringBuilder sbb = new StringBuilder("\n\t\t+TopicWeights-b-");
-			        while (iterator.hasNext()){ //&& rank < 5) {
-		                IDSorter idCountPair = iterator.next();
-		                Object word = dataAlphabet.lookupObject(idCountPair.getID());
-		                Double weight = idCountPair.getWeight();
-		                formatter.format("%s (%.0f) ", word, weight);
-		                if(!topicWordsFilled){
-		                	Set<String> words = result.topicIdTopicWordsMap.get(topicNumAsString);
-		                	if(words == null){
-		                		words = new HashSet<>();
-		                		result.topicIdTopicWordsMap.put(topicNumAsString, words);
-		                	}
-		                	words.add(word.toString());		                	
-		                }
-		                
-		                wordList.add((String) word);
-		                weightList.add(weight);		       
-		                rank++;
-		            }
-		            if(VERBOSE) syso(formatter.toString());
-	            }
-	            topicWordsFilled = true;
-	            topicSortedWordList.put(topicNumAsString, wordList);
-	            result.docToTopicSortedWordList.put(docId, topicSortedWordList);
-	            topicSortedWeightList.put(topicNumAsString, weightList);
-	            result.docToTopicSortedWordWeightList.put(docId, topicSortedWeightList);
-	            result.docToTopicDistr.put(docId, topicToDistributionMap);
+	        for(int i=0; i<nTops; i++){
+	        	String topicId = new Integer(i).toString();
+	        	Double prob = docTopicDistribution[i];
+	        	topicListWithProb.add(new StringDoublePair(topicId,prob));	        	
 	        }
+	        // sort and add to TopicResult
+	        Collections.sort(topicListWithProb);
+	        result.docToSortedTopicsListMap.put(docId, topicListWithProb);
+		    
+	        // ------------
+	        // Show the words in topics sorted by the contributions to the document
+//	        for (int topic = 0; topic < numTopics; topic++) {
+//            	String topicNumAsString = new Integer(topic).toString();
+//
+//            	Iterator<IDSorter> iterator = topicSortedWords.get(topic).iterator();		// nem fugg a doc-tol?
+//	            Map<String,List<StringIntegerPair>> topicSortedWordList = new HashMap<>();
+//
+//                if(TRACE) syso("\t* topic-" + topicNumAsString);
+//            	
+//                Formatter formatter = new Formatter(new StringBuilder(), Locale.US);
+//	            formatter.format("%d\t%.3f\t", topic, docTopicDistribution[topic]);
+//	            
+//	            List<StringIntegerPair> wordList = new ArrayList<>();
+//	            int rank = 0;
+//		        while (iterator.hasNext()){ //&& rank < 5) {
+//	                IDSorter idCountPair = iterator.next();
+//	                String word = (String) dataAlphabet.lookupObject(idCountPair.getID());
+//	                Integer count = new Double(idCountPair.getWeight()).intValue();
+//	                formatter.format("%s (%.0f) ", word, (double) count);
+//	                
+//	                wordList.add(new StringIntegerPair(word,count));
+//	                rank++;
+//	            }
+//	            if(TRACE) syso(formatter.toString());
+//		            
+//	            topicSortedWordList.put(topicNumAsString, wordList);
+//	            result.docToTopicToSortedWordCountList.put(docId, topicSortedWordList);
+//	        }
         }
         
-        /**
-        // Create a new instance with high probability of topic 0
-        StringBuilder topicZeroText = new StringBuilder();
-        Iterator<IDSorter> iterator = topicSortedWords.get(0).iterator();
-
-        int rank = 0;
-        while (iterator.hasNext() && rank < 5) {
-            IDSorter idCountPair = iterator.next();
-            topicZeroText.append(dataAlphabet.lookupObject(idCountPair.getID()) + " ");
-            rank++;
-        }
-
-        // Create a new instance named "test instance" with empty target and source fields.
-        InstanceList testing = new InstanceList(instances.getPipe());
-        testing.addThruPipe(new Instance(topicZeroText.toString(), null, "test instance", null));
-
-        TopicInferencer inferencer = model.getInferencer();
-        double[] testProbabilities = inferencer.getSampledDistribution(testing.get(0), 10, 1, 5);
-        System.out.println("0\t" + testProbabilities[0]);
-		**/
+        if(VERBOSE)
+        	syso(result.toString(PRINT_LIST_LIMIT));
         
         Long processingTime = System.currentTimeMillis() - startTime;
         if(VERBOSE){
         	syso("\n --------------");
-        	syso("* Processed " + result.docIds.size() + " documents, for " + result.nTopics + "topics (iterations: " + result.nIterations + ")");
+        	syso("* Processed " + result.docIds.size() + " documents, for " + result.nTopics + " topics (iterations: " 
+        			+ result.nIterations + ")");
         	syso("* Processing time was " + processingTime + " ms");
         }
         else {
         	System.out.println("\n --------------");
-        	System.out.println("* Processed " + result.docIds.size() + " documents, for " + result.nTopics + "topics (iterations: " + result.nIterations + ")");
+        	System.out.println("* Processed " + result.docIds.size() + " documents, for " + result.nTopics 
+        			+ " topics (iterations: " + result.nIterations + ")");
         	System.out.println("* Processing time was " + processingTime + " ms");
         }
         return result;
@@ -296,12 +306,12 @@ public class TopicModeller {
 		
 	private void createOutFile(){
 		// out file
+		BufferedWriter out = null;
 		
 		if(this.TOFILE){
 			timeStamp = Utils.timeStampFormatted();
 			String outFileName = OUTFILE.replace("$", timeStamp.toString());
 			//outFile = Utils.createFileIfNotExists(outFileName);
-			BufferedWriter out = null;
 			try {
 				out = new BufferedWriter(new OutputStreamWriter (
 						new FileOutputStream(outFileName),"UTF-8"));
@@ -319,7 +329,7 @@ public class TopicModeller {
 		Utils.TOFILE = this.TOFILE;		
 	}
 	
-	public String createMalletFormatString(String dirName) throws IOException{
+	public String createMalletFormatString(String dirName, Boolean fillResult) throws IOException{
 
 		StringBuilder sb = new StringBuilder();
 
@@ -334,13 +344,14 @@ public class TopicModeller {
 			String docId = f.getName();
 			if(!docId.endsWith(FILE_NAME_END)) continue;
 			String text = readFileToString(f.getAbsolutePath());
-			result.docIds.add(docId);
-			result.docIdDocTextMap.put(docId, text);
-			sb.append(f.getName()).append("\tTopics\t").append(text.replaceAll("\n", " ").replaceAll(" +"," ")).append("\n");
+			if(fillResult){
+				tDocIds.add(docId);
+				tDocIdDocTextMap.put(docId, text);
+			}
+			sb.append(f.getName()).append("\tTopics\t").append(text.replaceAll("\n", " ").replaceAll("\t"," ").replaceAll(" +"," "))
+					.append("\n");
 		}
 			
 		return sb.toString();
 	}
-
-
 }

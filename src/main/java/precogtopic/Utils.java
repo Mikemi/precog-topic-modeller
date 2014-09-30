@@ -115,6 +115,13 @@ public class Utils {
     }    
 
     /**
+     * Just round to 4 digits
+     */
+    static public Double round3(double d){
+    	return (double)Math.round(d * 1000) / 1000;
+    }    
+
+    /**
      * Just round to 2 digits, convert to string and replace '.' with ','
      */
     static public String round2Comma(double d){
